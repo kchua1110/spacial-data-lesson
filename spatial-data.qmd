@@ -1,0 +1,188 @@
+---
+title: "Intro to Spatial Data"
+format: html
+---
+
+## Download data
+```{r}
+knb_url <- 'https://dev.nceas.ucsb.edu/knb/d1/mn/v2/object/urn%3Auuid%3Aaceaecb2-1ce0-4d41-a839-d3607d32bb58'
+
+# gets the file you want from the url
+download.file(url = knb_url, destfile = 'demo_data.zip')
+
+# extract all files from compressed folder
+# all files, want to save in folder, "data"
+unzip('demo_data.zip', exdir = 'data')
+
+#removes compressed file from directory
+file.remove('demo_data.zip')
+```
+
+## Set up
+
+```{r}
+library(readr) # read csv files
+library(sf) # spatial data
+library(ggplot2) # plotting
+library(leaflet) # interactive maps
+library(scales) # helper package with scales in ggplot
+library(ggmap) # base maps
+library(dplyr) # tidy data 
+```
+
+## Read data - shape files
+```{r}
+ak_region <- read_sf("data/ak_regions_simp.shp")
+```
+
+## Explore data
+```{r}
+# plot data first
+plot(ak_region)
+class(ak_region)
+
+head(ak_region)
+```
+
+## Coordinate Reference System (CRS)
+```{r}
+#check crs of data
+st_crs(ak_region)
+```
+
+## Transform projection of data -- changes projection and provides a better, more nuanced view of Alaska
+```{r}
+ak_region_3338 <- ak_region %>%
+  st_transform(crs = 3338)
+
+# check
+st_crs(ak_region_3338)
+
+plot(ak_region_3338)
+```
+
+## 'sf' and 'tidyverse'
+```{r}
+# names of columns
+colnames(ak_region_3338)
+```
+
+Using 'select()'
+```{r}
+ak_region_3338 %>% 
+  select(region)
+
+# geometry column is "sticky" so it will always come with whatever column you select since it needs that column to plot the data
+```
+
+'filter()' by row - unique values of the regions
+```{r}
+unique(ak_region_3338$region)
+```
+
+```{r}
+ak_region_3338 %>% 
+  filter(region == "Southeast")
+```
+
+## Spatial Joins
+
+```{r}
+# read in population data
+pop <- read_csv("data/alaska_population.csv")
+```
+
+Explore population data
+```{r}
+colnames(pop)
+head(pop)
+glimpse(pop)
+class(pop)
+```
+
+## Transform tbl dataframe into sp object 
+```{r}
+pop_4326 <- st_as_sf(pop,
+                     coords = c("lng", "lat"), # needs to be in this order because it's (x,y)
+                     crs = 4326,
+                     remove = F) #don't remove the columns "lat", "lng"
+
+class(pop_4326)
+head(pop_4326)
+```
+
+Join population data with region data
+```{r}
+pop_joined <- st_join(pop_4326, ak_region_3338, join = st_within)
+# want each population to be within a region of the dataframe
+```
+
+Correcting error -- not the same coordinates, need the two crs to be equal
+
+```{r}
+pop_3338 <- st_transform(pop_4326, crs = 3338)
+
+pop_joined <- st_join(pop_3338, ak_region_3338, join = st_within)
+
+head(pop_joined)
+```
+
+## Calculate the total population by region using group_by() and summarize()
+```{r}
+pop_region <- pop_joined %>% 
+  as.data.frame() %>% 
+  group_by(region) %>% 
+  summarise(total_pop = sum(population))
+```
+
+
+```{r}
+pop_region_3338 <- left_join(ak_region_3338, pop_region, by = "region")
+
+plot(pop_region_3338)
+plot(pop_region_3338["total_pop"])
+```
+Calculation popluation by mgmt area
+```{r}
+pop_mgmt_3338 <- pop_region_3338 %>% 
+  group_by(mgmt_area) %>% 
+  summarise(total_pop = sum(total_pop), do_union = F)
+
+plot(pop_mgmt_3338["total_pop"])
+```
+
+## Saving spatial objects
+```{r}
+write_sf(pop_region_3338, "data/ak_regions_population.shp")
+```
+
+## Plotting with 'ggplot2 (package)' and "ggplot (function)" 
+```{r}
+ggplot(pop_region_3338) + 
+  geom_sf(aes(fill = total_pop)) +
+  labs(fill = "Total Population") +
+  scale_fill_continuous(low = "khaki",
+                        high = "firebrick",
+                        labels = comma) +
+  theme_bw()
+```
+Read river data
+```{r}
+rivers_3338 <- read_sf("data/ak_rivers_simp.shp")
+st_crs(rivers_3338)
+```
+```{r}
+ggplot() +
+    geom_sf(data = pop_region_3338, aes(fill = total_pop)) +
+    geom_sf(data = pop_3338, size = 0.5) +
+    geom_sf(data = rivers_3338,
+            aes(linewidth = StrOrder)) +
+    scale_linewidth(range = c(0.05, 0.5), guide = "none") + #width of polygon
+    labs(title = "Total Population by Alaska Region",
+         fill = "Total Population") +
+    scale_fill_continuous(low = "khaki",
+                          high =  "firebrick",
+                          labels = comma) +
+    theme_bw() 
+```
+
